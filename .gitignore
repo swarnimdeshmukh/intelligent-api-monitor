@@ -10,3 +10,4 @@ data/*.sqlite
 models/*
 !models/.gitkeep
 .streamlit/
+data/*.db-journal
