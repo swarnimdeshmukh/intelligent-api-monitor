@@ -1,4 +1,3 @@
-cat > dashboard/dashboard.py <<'PY'
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -8,129 +7,63 @@ from app.monitoring.store import recent
 from app.incidents.manager import recent as incidents
 
 
-# ---------------------------------------------------------
-# Page configuration
-# ---------------------------------------------------------
-
 st.set_page_config(
     page_title="Intelligent API Monitoring",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 init_db()
 
-
-# ---------------------------------------------------------
-# Header
-# ---------------------------------------------------------
-
-st.title("⚡ Intelligent API Monitoring")
+st.title("⚡ Intelligent API Monitoring & Incident Response")
 st.caption(
-    "Real-time API health • Hybrid anomaly detection • "
-    "Incident response • RAG runbooks • AI-assisted analysis"
+    "Real-time monitoring • Hybrid anomaly detection • Incident management • RAG-assisted analysis"
 )
 
-
-# ---------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------
-
-with st.sidebar:
-    st.header("Monitoring Console")
-
-    refresh = st.button("🔄 Refresh Data", use_container_width=True)
-
-    st.divider()
-
-    st.markdown(
-        """
-        **System Components**
-
-        🟢 API Monitoring  
-        🟢 Anomaly Detection  
-        🟢 Incident Management  
-        🟢 RAG Runbooks  
-        🟢 AI Analysis
-        """
-    )
-
-    st.divider()
-
-    st.caption("Intelligent API Monitoring System")
-
-
-# ---------------------------------------------------------
+# -----------------------------
 # Load data
-# ---------------------------------------------------------
+# -----------------------------
+metrics = pd.DataFrame(recent(1000))
+incidents_df = pd.DataFrame(incidents(200))
 
-metrics_raw = recent(1000)
-incidents_raw = incidents(200)
+if not metrics.empty:
+    metrics["timestamp"] = pd.to_datetime(metrics["timestamp"])
 
-metrics = pd.DataFrame(metrics_raw)
-incident_df = pd.DataFrame(incidents_raw)
-
-
-# ---------------------------------------------------------
-# KPI calculations
-# ---------------------------------------------------------
-
-metric_count = len(metrics)
+# -----------------------------
+# KPI cards
+# -----------------------------
+total_metrics = len(metrics)
 
 open_incidents = (
-    int((incident_df["status"] == "OPEN").sum())
-    if not incident_df.empty and "status" in incident_df.columns
+    int((incidents_df["status"] == "OPEN").sum())
+    if not incidents_df.empty
     else 0
 )
 
-anomaly_count = (
+anomalies = (
     int(metrics["is_anomaly"].sum())
     if not metrics.empty and "is_anomaly" in metrics.columns
     else 0
 )
 
-target_count = (
+targets = (
     int(metrics["target"].nunique())
-    if not metrics.empty and "target" in metrics.columns
+    if not metrics.empty
     else 0
 )
 
+col1, col2, col3, col4 = st.columns(4)
 
-# ---------------------------------------------------------
-# KPI cards
-# ---------------------------------------------------------
-
-c1, c2, c3, c4 = st.columns(4)
-
-c1.metric(
-    "📊 Metrics Collected",
-    metric_count,
-)
-
-c2.metric(
-    "🚨 Open Incidents",
-    open_incidents,
-)
-
-c3.metric(
-    "⚠️ Anomalies",
-    anomaly_count,
-)
-
-c4.metric(
-    "🎯 Monitored Targets",
-    target_count,
-)
-
+col1.metric("📊 Metrics", total_metrics)
+col2.metric("🚨 Open Incidents", open_incidents)
+col3.metric("⚠️ Anomalies", anomalies)
+col4.metric("🎯 Targets", targets)
 
 st.divider()
 
-
-# ---------------------------------------------------------
+# -----------------------------
 # Endpoint health
-# ---------------------------------------------------------
-
+# -----------------------------
 st.subheader("🎯 Endpoint Health")
 
 if metrics.empty:
@@ -143,51 +76,42 @@ else:
         .copy()
     )
 
-    health_rows = []
+    health_cols = st.columns(min(len(latest), 5))
 
-    for _, row in latest.iterrows():
-        status = row.get("status_code")
+    for idx, (_, row) in enumerate(latest.iterrows()):
+        if idx >= 5:
+            break
 
-        if status is None or pd.isna(status):
-            health = "🔴 Unreachable"
-        elif int(status) >= 500:
-            health = "🔴 Critical"
-        elif float(row.get("latency_ms", 0)) >= 1000:
-            health = "🟠 Degraded"
+        target_name = row["target"].split("/")[-1] or "root"
+
+        if row["success"]:
+            status = "🟢 HEALTHY"
         else:
-            health = "🟢 Healthy"
+            status = "🔴 FAILED"
 
-        health_rows.append(
-            {
-                "Endpoint": row["target"],
-                "Health": health,
-                "Latency (ms)": round(float(row["latency_ms"]), 2),
-                "Status": int(status) if not pd.isna(status) else "N/A",
-                "Error Rate": round(float(row["error_rate"]) * 100, 2),
-            }
+        health_cols[idx].markdown(
+            f"""
+**`/{target_name}`**
+
+{status}
+
+Latency: **{row['latency_ms']:.1f} ms**
+
+HTTP: **{row['status_code']}**
+"""
         )
 
-    health_df = pd.DataFrame(health_rows)
+st.divider()
 
-    st.dataframe(
-        health_df,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ---------------------------------------------------------
+# -----------------------------
 # Charts
-# ---------------------------------------------------------
-
+# -----------------------------
 if not metrics.empty:
 
-    metrics["timestamp"] = pd.to_datetime(metrics["timestamp"])
+    chart1, chart2 = st.columns(2)
 
-    chart_col1, chart_col2 = st.columns(2)
-
-    with chart_col1:
-        st.subheader("⏱️ Latency")
+    with chart1:
+        st.subheader("📈 Latency")
 
         latency_fig = px.line(
             metrics.sort_values("timestamp"),
@@ -212,7 +136,7 @@ if not metrics.empty:
             use_container_width=True,
         )
 
-    with chart_col2:
+    with chart2:
         st.subheader("📉 Error Rate")
 
         error_fig = px.line(
@@ -238,190 +162,181 @@ if not metrics.empty:
             use_container_width=True,
         )
 
+# -----------------------------
+# Incident overview
+# -----------------------------
+st.divider()
+st.subheader("🚨 Incident Overview")
 
-# ---------------------------------------------------------
-# Distribution charts
-# ---------------------------------------------------------
+if incidents_df.empty:
+    st.success("No incidents recorded.")
+else:
 
-if not metrics.empty:
+    ic1, ic2 = st.columns(2)
 
-    chart_col3, chart_col4 = st.columns(2)
-
-    with chart_col3:
-        st.subheader("📡 HTTP Status Distribution")
-
-        status_data = (
-            metrics["status_code"]
-            .fillna(0)
-            .astype(int)
-            .astype(str)
+    with ic1:
+        severity_counts = (
+            incidents_df["severity"]
             .value_counts()
             .reset_index()
         )
 
-        status_data.columns = ["Status Code", "Count"]
+        severity_counts.columns = ["severity", "count"]
 
-        status_fig = px.bar(
-            status_data,
-            x="Status Code",
-            y="Count",
-            text="Count",
+        fig = px.bar(
+            severity_counts,
+            x="severity",
+            y="count",
+            text="count",
+            labels={
+                "severity": "Severity",
+                "count": "Incidents",
+            },
+        )
+
+        fig.update_traces(
+            textposition="outside"
         )
 
         st.plotly_chart(
-            status_fig,
+            fig,
             use_container_width=True,
         )
 
-    with chart_col4:
-        st.subheader("🚨 Incident Severity")
+    with ic2:
+        status_counts = (
+            incidents_df["status"]
+            .value_counts()
+            .reset_index()
+        )
 
-        if not incident_df.empty:
+        status_counts.columns = ["status", "count"]
 
-            severity_data = (
-                incident_df["severity"]
-                .value_counts()
-                .reset_index()
-            )
+        fig = px.pie(
+            status_counts,
+            names="status",
+            values="count",
+            hole=0.45,
+        )
 
-            severity_data.columns = ["Severity", "Count"]
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+        )
 
-            severity_fig = px.bar(
-                severity_data,
-                x="Severity",
-                y="Count",
-                color="Severity",
-                text="Count",
-            )
-
-            st.plotly_chart(
-                severity_fig,
-                use_container_width=True,
-            )
-
-        else:
-            st.info("No incidents recorded yet.")
-
-
-# ---------------------------------------------------------
+# -----------------------------
 # Recent metrics
-# ---------------------------------------------------------
-
+# -----------------------------
+st.divider()
 st.subheader("📋 Recent Metrics")
 
 if metrics.empty:
-    st.info("No metrics available.")
+    st.info("No monitoring metrics available.")
 else:
-
-    display_columns = [
-        column
-        for column in [
-            "timestamp",
-            "target",
-            "latency_ms",
-            "status_code",
-            "success",
-            "error_rate",
-            "throughput",
-            "is_anomaly",
-        ]
-        if column in metrics.columns
+    display_cols = [
+        "timestamp",
+        "target",
+        "latency_ms",
+        "status_code",
+        "success",
+        "error_rate",
+        "throughput",
     ]
 
-    recent_metrics = (
+    available_cols = [
+        c for c in display_cols
+        if c in metrics.columns
+    ]
+
+    st.dataframe(
         metrics.sort_values(
             "timestamp",
             ascending=False,
-        )
-        .head(100)
-    )
-
-    st.dataframe(
-        recent_metrics[display_columns],
+        ).head(100)[available_cols],
         use_container_width=True,
         hide_index=True,
     )
 
-
-# ---------------------------------------------------------
-# Incident Response
-# ---------------------------------------------------------
-
+# -----------------------------
+# Incidents
+# -----------------------------
 st.divider()
+st.subheader("🔎 Incident Details")
 
-st.subheader("🚨 Incident Response")
-
-if incident_df.empty:
-
+if incidents_df.empty:
     st.success("No incidents recorded yet.")
-
 else:
 
-    for _, incident in incident_df.iterrows():
+    for _, row in incidents_df.head(30).iterrows():
 
-        severity_value = incident.get("severity", "UNKNOWN")
-        incident_id = incident.get("incident_id", "N/A")
-        target = incident.get("target", "Unknown")
+        severity_value = row["severity"]
+
+        if severity_value == "CRITICAL":
+            icon = "🔴"
+        elif severity_value == "HIGH":
+            icon = "🟠"
+        elif severity_value == "MEDIUM":
+            icon = "🟡"
+        else:
+            icon = "🔵"
 
         with st.expander(
-            f"{severity_value} | {incident_id} | {target}"
+            f"{icon} {severity_value} | "
+            f"{row['incident_id']} | "
+            f"{row['target']}"
         ):
 
             left, right = st.columns(2)
 
             with left:
-
-                st.markdown("### Incident Details")
+                st.markdown("### Incident")
 
                 st.write(
-                    f"**Status:** {incident.get('status', 'UNKNOWN')}"
+                    f"**Status:** {row['status']}"
                 )
 
                 st.write(
-                    f"**Severity:** {severity_value}"
+                    f"**Reason:** {row['anomaly_reason']}"
                 )
 
                 st.write(
-                    f"**Detected:** {incident.get('timestamp', 'N/A')}"
-                )
-
-                st.write(
-                    f"**Reason:** {incident.get('anomaly_reason', 'N/A')}"
-                )
-
-                st.write(
-                    f"**Details:** {incident.get('details', 'N/A')}"
+                    f"**Details:** {row['details']}"
                 )
 
             with right:
+                st.markdown("### Detection")
 
-                st.markdown("### 🤖 AI Analysis")
+                st.write(
+                    f"**Anomaly Score:** {row['anomaly_score']}"
+                )
 
-                analysis = incident.get("analysis")
+                st.write(
+                    f"**Timestamp:** {row['timestamp']}"
+                )
 
-                if analysis:
-                    st.write(analysis)
-                else:
-                    st.info("Analysis pending.")
+            st.markdown("### 🤖 Incident Analysis")
+
+            st.write(
+                row["analysis"]
+                if row["analysis"]
+                else "Analysis pending."
+            )
 
             st.markdown("### 📚 RAG Evidence")
 
-            evidence = incident.get("evidence")
+            evidence = row["evidence"]
 
             if evidence:
                 st.code(evidence)
             else:
-                st.info("No RAG evidence available.")
+                st.info("No evidence recorded.")
 
-
-# ---------------------------------------------------------
+# -----------------------------
 # Footer
-# ---------------------------------------------------------
-
+# -----------------------------
 st.divider()
 
 st.caption(
     "Intelligent API Monitoring & Incident Response System • "
-    "Hybrid ML + RAG + AI"
+    "Hybrid Detection + RAG + AI-assisted Incident Analysis"
 )
-PY
